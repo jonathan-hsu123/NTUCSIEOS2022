@@ -22,7 +22,8 @@ fmtname(char *path)
   return buf;
 }
 
-void tree(char dir_name[], int level, int* dir_cnt, int* file_cnt, int last_file) {
+void tree(char dir_name[], int level, int* dir_cnt, int* file_cnt, int L, int parent_last) {
+  // printf("L: %d\n", L);
     char buf[512], *p;
     int fd = open(dir_name, 0), fd2;
     int cnt = 0;
@@ -31,26 +32,41 @@ void tree(char dir_name[], int level, int* dir_cnt, int* file_cnt, int last_file
     strcpy(buf, dir_name);
     p = buf+strlen(buf);
     *p++ = '/';
-    while(read(fd, &de, sizeof(de)) == sizeof(de)) cnt++;
+    while(read(fd, &de, sizeof(de)) == sizeof(de)) {
+      // printf("%s\n", de.name);
+      cnt++;
+    }
     close(fd);
     fd = open(dir_name, 0);
     for(int i = 0; i < cnt - 1; i++) {
-      read(fd, &de, sizeof(de));
-      if(de.name[0] == '.' || de.inum == 0) continue;
+      // read(fd, &de, sizeof(de));
+      if(read(fd, &de, sizeof(de)) != sizeof(de)) break;
+      if(de.name[0] == '.' || de.inum == 0) {
+        continue;
+      }
       memmove(p, de.name, DIRSIZ);
       p[DIRSIZ] = 0;
       fd2 = open(buf, 0);
       fstat(fd2, &st);
-      for(int j = 0; j < last_file; j++) printf("    ");
-      printf("|");
-      for(int j = 0; j < level - 1 - last_file; j++) printf("   |");
-      printf("\n");
-      for(int j = 0; j < last_file; j++) printf("    ");
-      for(int j = 0; j < level - 1 - last_file; j++) printf("|   ");
+      int level_val = L;
+      for(int j = 0; j < level; j++) {
+        int tmp = level_val >> (level - 1 - j);
+        if(tmp == 0) printf("    ");
+        else printf("|   ");
+        level_val -= tmp << (level - 1 - j);
+      }
+      printf("|\n");
+      level_val = L;
+      for(int j = 0; j < level; j++) {
+        int tmp = level_val >> (level - 1 - j);
+        if(tmp == 0) printf("    ");
+        else printf("|   ");
+        level_val -= tmp << (level - 1 - j);
+      }
       printf("+-- %s\n", fmtname(buf));
       if(st.type == T_DIR) {
         (*dir_cnt)++;
-        tree(buf, level + 1, dir_cnt, file_cnt, last_file);
+        tree(buf, level + 1, dir_cnt, file_cnt, (L << 1) + 1, 1);
       }
       else (*file_cnt)++;
       close(fd2);
@@ -61,16 +77,25 @@ void tree(char dir_name[], int level, int* dir_cnt, int* file_cnt, int last_file
     p[DIRSIZ] = 0;
     fd2 = open(buf, 0);
     fstat(fd2, &st);
-    for(int j = 0; j < last_file; j++) printf("    ");
-    printf("|");
-    for(int j = 0; j < level - 1 - last_file; j++) printf("   |");
-    printf("\n");
-    for(int j = 0; j < last_file; j++) printf("    ");
-    for(int j = 0; j < level - 1 - last_file; j++) printf("|   ");
+    int level_val = L;
+    for(int j = 0; j < level; j++) {
+      int tmp = level_val >> (level - 1 - j);
+      if(tmp == 0) printf("    ");
+      else printf("|   ");
+      level_val -= tmp << (level - 1 - j);
+    }
+    printf("|\n");
+    level_val = L;
+    for(int j = 0; j < level; j++) {
+      int tmp = level_val >> (level - 1 - j);
+      if(tmp == 0) printf("    ");
+      else printf("|   ");
+      level_val -= tmp << (level - 1 - j);
+    }
     printf("+-- %s\n", fmtname(buf));
     if(st.type == T_DIR) {
       (*dir_cnt)++;
-      tree(buf, level + 1, dir_cnt, file_cnt, last_file + 1);
+      tree(buf, level + 1, dir_cnt, file_cnt, (L << 1) + 0, 0);
     }
     else (*file_cnt)++;
     close(fd2);
@@ -102,7 +127,7 @@ int main(int argc, char *argv[]) {
         }
         close(fd);
         printf("%s\n", argv[1]);
-        tree(argv[1], 1, &dir_cnt, &file_cnt, 0);
+        tree(argv[1], 0, &dir_cnt, &file_cnt, 0, 0);
         write(p[1], &dir_cnt, sizeof(int));
         write(p[1], &file_cnt, sizeof(int));
         exit(0);
