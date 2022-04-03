@@ -117,8 +117,8 @@ walkaddr(pagetable_t pagetable, uint64 va)
   pte = walk(pagetable, va, 0);
   if(pte == 0)
     return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+  // if((*pte & PTE_V) == 0)
+  //   return 0;
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -454,20 +454,22 @@ void re_vmprint(pte_t* P, int idx, int level, int last_val, pte_t va) {
   }
   if(last_val == idx) printf("└── ");
   else printf("├── ");
-  printf("%d: pte=%p va=%p pa=%p", idx, P, va, PTE2PA(pte));
+  if(pte & PTE_V) printf("%d: pte=%p va=%p pa=%p", idx, P, va, PTE2PA(pte));
+  else if(pte & PTE_S) printf("%d: pte=%p va=%p blockno=%p", idx, P, va, PTE2BLOCKNO(pte));
   if(pte & PTE_V) printf(" V");
   if(pte & PTE_R) printf(" R");
   if(pte & PTE_W) printf(" W");
   if(pte & PTE_X) printf(" X");
   if(pte & PTE_U) printf(" U");
+  if(pte & PTE_S) printf(" S");
   printf("\n");
   if((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
     pagetable_t pagetable = (pagetable_t)PTE2PA(pte);
     int last = -1;
-    for(int i = 0; i < 512; i++) if(pagetable[i] & PTE_V) last = i;
+    for(int i = 0; i < 512; i++) if(pagetable[i] & (PTE_V | PTE_S)) last = i;
     for(int i = 0; i < 512; i++) {
       if(last == i) prefix_str[level + 1] = 0;
-      if(pagetable[i] & PTE_V) {
+      if(pagetable[i] & (PTE_V | PTE_S)) {
         re_vmprint(pagetable + i, i, level + 1, last, find_va(va, i, level + 1));
       }
     }
@@ -481,11 +483,11 @@ void vmprint(pagetable_t pagetable) {
   for(int i = 0; i < 3; i++) prefix_str[i] = 1;
   printf("page table %p\n", pagetable);
   int last_val = -1;
-  for(int i = 0; i < 512; i++) if(pagetable[i] & PTE_V) last_val = i;
+  for(int i = 0; i < 512; i++) if(pagetable[i] & (PTE_V | PTE_S)) last_val = i;
   for(int i = 0; i < 512; i++) {
     // printf("%s\n", prefix_str);
     if(last_val == i) prefix_str[0] = 0;
-    if(pagetable[i] & PTE_V) {
+    if(pagetable[i] & (PTE_V | PTE_S)) {
       re_vmprint(pagetable + i, i, 0, last_val, find_va(0, i, 0));
     }
   }
@@ -496,12 +498,44 @@ void vmprint(pagetable_t pagetable) {
 /* NTU OS 2022 */
 /* Map pages to physical memory or swap space. */
 int madvise(uint64 base, uint64 len, int advice) {
-  if(base + len > (uint64) (myproc() -> sz)) return -1;
+  uint64 size = (uint64) (myproc() -> sz);
+  pagetable_t pagetable = myproc() -> pagetable;
+  if(base + len > size) return -1;
   if(advice == MADV_DONTNEED) {
-
+    uint64 pa = 0;
+    for(uint64 i = base; i < base + len; i += PGSIZE) {
+      pa = walkaddr(pagetable, i);
+      if(pa != (uint64) 0) {
+        pte_t* pte = (walk(pagetable, i, 0));
+        *pte &= ~PTE_V;
+        *pte |= PTE_S;
+        *pte &= ~PA2PTE(pa);
+        begin_op();
+        uint block_num = balloc_page(ROOTDEV);
+        *pte |= BLOCKNO2PTE(block_num);
+        write_page_to_disk(ROOTDEV, (char*)pa, block_num);
+        end_op();
+        kfree((void*)pa);
+        // printf("%p %p\n", i, pa);
+      }
+    }
   }
   else if(advice == MADV_WILLNEED) {
-    panic("not implemented yet\n");
+    for(uint64 i = base; i < base + len; i += 4096) {
+      pte_t* pte = (walk(pagetable, i, 1));
+      uint64 ka = (uint64) kalloc();
+      memset((void*)ka, 0, PGSIZE);
+      if(*pte & PTE_S) {
+        uint block_num = PTE2BLOCKNO(*pte);
+        begin_op();
+        read_page_from_disk(ROOTDEV, (char*) ka, block_num);
+        bfree_page(ROOTDEV, block_num);
+        end_op();
+      }
+      mappages(pagetable, i, PGSIZE, ka, PTE_R | PTE_W | PTE_X | PTE_U);
+    }
+    // printf("%p %p\n", base, len);
+    // panic("not implemented yet\n");
   }
   /* TODO */
   // 
